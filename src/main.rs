@@ -135,7 +135,7 @@ impl eframe::App for RandomNumberGeneratorApp {
                 egui::Layout::bottom_up(egui::Align::Center),
                 |ui| {
                     
-                    ui.label("https://gitee.com/dhy-gitee/random-tool");
+                    ui.label("https://github.com/Daihongyi/random-tool-github");
                 },
             );
 

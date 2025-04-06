@@ -123,7 +123,7 @@ impl eframe::App for RandomNumberGeneratorApp {
 
             // 恢复逗号分隔的滚动显示
             egui::ScrollArea::vertical() // 支持垂直滚动
-                .max_height(150.0) // 设置最大显示高度
+                .max_height(160.0) // 设置最大显示高度
                 .show(ui, |ui| {
                     ui.label( // 直接显示逗号分隔的字符串
                         self.generated_numbers

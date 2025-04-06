@@ -15,23 +15,36 @@ fn main() {
         "Random Number Generator",
         options,
         Box::new(|cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::light()); // 设置默认为浅色模式[^1^]
-            Ok(Box::new(RandomNumberGeneratorApp::default()))
+            cc.egui_ctx.set_visuals(egui::Visuals::light());
+            Ok(Box::new(RandomNumberGeneratorApp::new())) // 使用自定义构造函数
         }),
     );
 }
 
-#[derive(Default)]
+
 pub struct RandomNumberGeneratorApp {
     lower_bound: i64,
     upper_bound: i64,
     num_to_generate: usize,
     allow_duplicates: bool,
     generated_numbers: Vec<i64>,
-
+    cached_time: String,          // 新增缓存时间字段
+    last_update_time: std::time::Instant, // 新增最后更新时间字段
 }
 
-
+impl RandomNumberGeneratorApp {
+    pub fn new() -> Self {
+        Self {
+            lower_bound: 0,
+            upper_bound: 1024,
+            num_to_generate: 1,
+            allow_duplicates: false,
+            generated_numbers: Vec::new(),
+            cached_time: String::new(),
+            last_update_time: std::time::Instant::now(), // 显式初始化
+        }
+    }
+}
 
 impl eframe::App for RandomNumberGeneratorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -74,12 +87,16 @@ impl eframe::App for RandomNumberGeneratorApp {
             ui.checkbox(&mut self.allow_duplicates, "Allow Duplicates");
 
             //时间
-            let local_time = Local::now();
-            let formatted_time = local_time.format("%Y-%m-%d %H:%M:%S").to_string();
+            let now = std::time::Instant::now();
+            if now.duration_since(self.last_update_time).as_millis() >= 500 {
+                let local_time = Local::now();
+                self.cached_time = local_time.format("%Y-%m-%d %H:%M:%S").to_string();
+                self.last_update_time = now;
+            }
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                ui.label(formatted_time);
+                ui.label(&self.cached_time);
             });
-            ctx.request_repaint();
+            ctx.request_repaint_after(std::time::Duration::from_millis(500)); // 设置下次重绘时间
 
 
             // 显示生成的随机数

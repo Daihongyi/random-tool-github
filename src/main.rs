@@ -1,26 +1,7 @@
 use eframe::egui;
 use rand::Rng;
 use chrono::prelude::*;
-
-
-
-fn main() {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([480.0, 360.0]),
-        ..Default::default()
-    };
-
-
-    let _ = eframe::run_native(
-        "Random Number Generator",
-        options,
-        Box::new(|cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::light());
-            Ok(Box::new(RandomNumberGeneratorApp::new())) // 使用自定义构造函数
-        }),
-    );
-}
-
+use std::collections::HashSet; // 新增HashSet导入
 
 pub struct RandomNumberGeneratorApp {
     lower_bound: i64,
@@ -28,8 +9,8 @@ pub struct RandomNumberGeneratorApp {
     num_to_generate: usize,
     allow_duplicates: bool,
     generated_numbers: Vec<i64>,
-    cached_time: String,          // 新增缓存时间字段
-    last_update_time: std::time::Instant, // 新增最后更新时间字段
+    cached_time: String,
+    last_update_time: std::time::Instant,
 }
 
 impl RandomNumberGeneratorApp {
@@ -41,7 +22,36 @@ impl RandomNumberGeneratorApp {
             allow_duplicates: false,
             generated_numbers: Vec::new(),
             cached_time: String::new(),
-            last_update_time: std::time::Instant::now(), // 显式初始化
+            last_update_time: std::time::Instant::now(),
+        }
+    }
+
+    // 提取生成逻辑到独立函数
+    fn generate_numbers(&mut self) {
+        let mut rng = rand::rng();
+        self.generated_numbers.clear();
+
+        if self.lower_bound > self.upper_bound {
+            return;
+        }
+
+        if !self.allow_duplicates {
+            let range_size = (self.upper_bound - self.lower_bound + 1) as usize;
+            if self.num_to_generate > range_size {
+                return;
+            }
+
+            let mut unique_set = HashSet::new();
+            while unique_set.len() < self.num_to_generate {
+                let num = rng.random_range(self.lower_bound..=self.upper_bound);
+                unique_set.insert(num);
+            }
+            self.generated_numbers = unique_set.into_iter().collect();
+        } else {
+            for _ in 0..self.num_to_generate {
+                let num = rng.random_range(self.lower_bound..=self.upper_bound);
+                self.generated_numbers.push(num);
+            }
         }
     }
 }
@@ -49,122 +59,121 @@ impl RandomNumberGeneratorApp {
 impl eframe::App for RandomNumberGeneratorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-
-
-            //白天夜晚切换与标题
-            ui.horizontal(|ui|{
+            // 白天夜晚切换与标题
+            ui.horizontal(|ui| {
                 ui.heading("Random Number Generator");
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                    if ui.button("Dark").clicked(){
-                        ctx.set_visuals(egui::Visuals::dark());
-                    }
-                    if ui.button("Light").clicked(){
-                        ctx.set_visuals(egui::Visuals::light());
-                    }
-                });
-
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::TOP),
+                    |ui| {
+                        if ui.button("Dark").clicked() {
+                            ctx.set_visuals(egui::Visuals::dark());
+                        }
+                        if ui.button("Light").clicked() {
+                            ctx.set_visuals(egui::Visuals::light());
+                        }
+                    },
+                );
             });
+
             // 输入下限
             ui.horizontal(|ui| {
                 ui.label("Lower Bound:");
-                ui.add(egui::DragValue::new(&mut self.lower_bound)); // 使用 DragValue
+                ui.add(egui::DragValue::new(&mut self.lower_bound));
             });
 
             // 输入上限
             ui.horizontal(|ui| {
                 ui.label("Upper Bound:");
-                ui.add(egui::DragValue::new(&mut self.upper_bound)); // 使用 DragValue
+                ui.add(egui::DragValue::new(&mut self.upper_bound));
             });
 
             // 输入生成数量
             ui.horizontal(|ui| {
                 ui.label("Number of Random Numbers to Generate:");
-                ui.add(egui::DragValue::new(&mut self.num_to_generate).range(1..=1000)); // 使用 DragValue
+                ui.add(
+                    egui::DragValue::new(&mut self.num_to_generate)
+                        .range(1..=1000),
+                );
             });
 
             // 是否允许重复值
             ui.checkbox(&mut self.allow_duplicates, "Allow Duplicates");
 
-            //时间
+            // 时间显示
             let now = std::time::Instant::now();
             if now.duration_since(self.last_update_time).as_millis() >= 500 {
                 let local_time = Local::now();
-                self.cached_time = local_time.format("%Y-%m-%d %H:%M:%S").to_string();
+                self.cached_time = local_time
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string();
                 self.last_update_time = now;
             }
-            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                ui.label(&self.cached_time);
-            });
-            ctx.request_repaint_after(std::time::Duration::from_millis(500)); // 设置下次重绘时间
-
+            ui.with_layout(
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    ui.label(&self.cached_time);
+                },
+            );
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
 
             // 显示生成的随机数
-            ui.separator(); //分割线
+            ui.separator();
 
-            ui.horizontal(|ui|{
+            ui.horizontal(|ui| {
                 ui.heading("Generated Numbers");
-                // 生成随机数
+
+                // 生成按钮
                 if ui.button("Generate").clicked() {
-                    self.generated_numbers.clear(); // 清空之前的结果
-                    let mut rng = rand::rngs::ThreadRng::default(); // 使用新的 API
-
-                    //检查下限是否大于上限
-                    if self.lower_bound > self.upper_bound{
-                        self.generated_numbers = vec![];
-                    } else {
-                        if self.allow_duplicates {
-                            // 允许重复值，直接生成随机数
-                            for _ in 0..self.num_to_generate {
-                                let num = rng.random_range(self.lower_bound..=self.upper_bound);
-                                self.generated_numbers.push(num);
-                            }
-                        } else {
-                            // 不允许重复值
-                            let range = self.upper_bound - self.lower_bound + 1;
-                            if self.num_to_generate > range as usize {
-                                // 如果生成数量超过范围，无法生成不重复的随机数
-                                self.generated_numbers = vec![];
-                            } else {
-                                // 生成不重复的随机数
-                                let mut unique_numbers = Vec::new();
-                                while unique_numbers.len() < self.num_to_generate {
-                                    let num = rng.random_range(self.lower_bound..=self.upper_bound);
-                                    if !unique_numbers.contains(&num) {
-                                        unique_numbers.push(num);
-                                    }
-                                }
-
-                                self.generated_numbers = unique_numbers;
-                            }
-                        }
-                    }
+                    self.generate_numbers(); // 调用新方法
                 }
+
+                // 清空按钮
                 if ui.button("Clear").clicked() {
                     self.generated_numbers.clear();
                 }
             });
-                
-            ui.label(self.generated_numbers.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", "));
-            
-            //项目地址及许可证
+
+            // 显示结果
+            ui.label(
+                self.generated_numbers
+                    .iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+
+            // 项目地址及许可证
             ui.with_layout(
                 egui::Layout::bottom_up(egui::Align::Center),
                 |ui| {
-                    
                     ui.label("https://github.com/Daihongyi/random-tool-github");
                 },
             );
 
             ui.with_layout(
                 egui::Layout::bottom_up(egui::Align::RIGHT),
-
-                           |ui| {
-
-                               ui.label("MPL2.0");
-                           },
+                |ui| {
+                    ui.label("MPL2.0");
+                },
             );
-            
         });
     }
+}
+
+fn main() {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([480.0, 360.0]),
+        ..Default::default()
+    };
+
+    let _ = eframe::run_native(
+        "Random Number Generator",
+        options,
+        Box::new(|cc| {
+            cc.egui_ctx.set_visuals(egui::Visuals::light());
+            Ok(Box::new(RandomNumberGeneratorApp::new()))
+        }),
+    );
 }

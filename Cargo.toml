@@ -8,3 +8,13 @@ rand = "0.9.0"
 egui = "0.31.0"
 eframe = "0.31.0"
 chrono = "0.4.39"
+iced = "0.13.1"
+
+[source.crates-io]
+replace-with = 'mirror'
+
+[source.mirror]
+registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
+
+[registries.mirror]
+index = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"

@@ -1,169 +1,271 @@
+mod random_generator;
+
 use eframe::egui;
-use rand::Rng;
-use chrono::prelude::*;
-use std::collections::HashSet;
+use random_generator::RandomGenerator;
 
-pub struct RandomNumberGeneratorApp {
-    lower_bound: i64,
-    upper_bound: i64,
-    num_to_generate: usize,
-    allow_duplicates: bool,
-    generated_numbers: Vec<i64>,
-    cached_time: String,
-    last_update_time: std::time::Instant,
+struct RandomGeneratorApp {
+    gui_version: String,
+    generator: RandomGenerator,
+    lower_bound: String,
+    upper_bound: String,
+    num_to_generate: String,
+    filename: String,
+    error_message: String,
+    dark_mode: bool,
+    about_open: bool, // 新增字段控制About对话框
+    close_requested: bool, // 新增：用于关闭About对话框的请求
 }
 
-impl RandomNumberGeneratorApp {
-    pub fn new() -> Self {
+impl Default for RandomGeneratorApp {
+    fn default() -> Self {
         Self {
-            lower_bound: 0,
-            upper_bound: 1024,
-            num_to_generate: 1,
-            allow_duplicates: false,
-            generated_numbers: Vec::new(),
-            cached_time: String::new(),
-            last_update_time: std::time::Instant::now(),
-        }
-    }
-
-    // 修复随机数生成逻辑
-    fn generate_numbers(&mut self) {
-        let mut rng = rand::rng(); // 使用线程本地随机数生成器
-        self.generated_numbers.clear();
-
-        if self.lower_bound > self.upper_bound {
-            return;
-        }
-
-        if !self.allow_duplicates {
-            let range_size = (self.upper_bound - self.lower_bound + 1) as usize;
-            if self.num_to_generate > range_size {
-                return;
-            }
-
-            let mut unique_set = HashSet::new();
-            while unique_set.len() < self.num_to_generate {
-                let num = rng.random_range(self.lower_bound..=self.upper_bound); 
-                unique_set.insert(num);
-            }
-            self.generated_numbers = unique_set.into_iter().collect();
-        } else {
-            for _ in 0..self.num_to_generate {
-                let num = rng.random_range(self.lower_bound..=self.upper_bound);
-                self.generated_numbers.push(num);
-            }
+            gui_version: "v1.0".to_string(),
+            generator: RandomGenerator::new(),
+            lower_bound: "0".to_owned(),
+            upper_bound: "1024".to_owned(),
+            num_to_generate: "1".to_owned(),
+            filename: "numbers.txt".to_owned(),
+            error_message: String::new(),
+            dark_mode: false,
+            about_open: false, // 默认关闭
+            close_requested: false, // 默认无关闭请求
         }
     }
 }
 
-impl eframe::App for RandomNumberGeneratorApp {
+impl eframe::App for RandomGeneratorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 设置主题
+        let mut visuals = egui::Visuals::dark();
+        if !self.dark_mode {
+            visuals = egui::Visuals::light();
+        }
+        ctx.set_visuals(visuals);
+
+        // 处理关闭请求（在借用self之前）
+        if self.close_requested {
+            self.about_open = false;
+            self.close_requested = false;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Random Number Generator");
-                ui.with_layout(
-                    egui::Layout::right_to_left(egui::Align::TOP),
-                    |ui| {
-                        if ui.button("Dark").clicked() {
-                            ctx.set_visuals(egui::Visuals::dark());
+            ui.vertical_centered(|ui| {
+                ui.heading("✨ Random Number Generator");
+                ui.add_space(10.0);
+
+                // 设置面板
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::same(10.0 as i8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // 边界设置
+                            ui.vertical(|ui| {
+                                ui.label("Lower Bound:");
+                                let lower_input = ui.text_edit_singleline(&mut self.lower_bound);
+                                if lower_input.lost_focus() {
+                                    if let Ok(num) = self.lower_bound.parse() {
+                                        self.generator.set_lower_bound(num);
+                                        self.error_message.clear();
+                                    } else {
+                                        self.error_message = "Invalid lower bound".to_owned();
+                                    }
+                                }
+                            });
+
+                            ui.add_space(10.0);
+
+                            ui.vertical(|ui| {
+                                ui.label("Upper Bound:");
+                                let upper_input = ui.text_edit_singleline(&mut self.upper_bound);
+                                if upper_input.lost_focus() {
+                                    if let Ok(num) = self.upper_bound.parse() {
+                                        self.generator.set_upper_bound(num);
+                                        self.error_message.clear();
+                                    } else {
+                                        self.error_message = "Invalid upper bound".to_owned();
+                                    }
+                                }
+                            });
+
+                            ui.add_space(10.0);
+
+                            // 数量设置
+                            ui.vertical(|ui| {
+                                ui.label("Count:");
+                                let count_input = ui.text_edit_singleline(&mut self.num_to_generate);
+                                if count_input.lost_focus() {
+                                    if let Ok(num) = self.num_to_generate.parse() {
+                                        self.generator.set_num_to_generate(num);
+                                        self.error_message.clear();
+                                    } else {
+                                        self.error_message = "Invalid count".to_owned();
+                                    }
+                                }
+                            });
+                        });
+
+                        ui.add_space(5.0);
+
+                        // 重复选项
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.generator.allow_duplicates, "Allow duplicates");
+                            ui.toggle_value(&mut self.dark_mode, "🌙 Dark Mode");
+                        });
+                    });
+
+                ui.add_space(15.0);
+
+                // 按钮面板
+                ui.horizontal(|ui| {
+                    if ui.button("🎲 Generate").clicked() {
+                        self.generator.generate_numbers();
+                        self.error_message.clear();
+
+                        // 验证生成结果
+                        let (lower, upper) = self.generator.get_bounds();
+                        if lower > upper {
+                            self.error_message = "Lower bound > upper bound".to_owned();
+                        } else if !self.generator.get_allow_duplicates()
+                            && self.generator.get_numbers().len() < self.generator.num_to_generate
+                        {
+                            self.error_message = "Not enough unique numbers".to_owned();
                         }
-                        if ui.button("Light").clicked() {
-                            ctx.set_visuals(egui::Visuals::light());
+                    }
+
+                    if ui.button("🧹 Clear").clicked() {
+                        self.generator.clear_numbers();
+                        self.error_message.clear();
+                    }
+
+                    if ui.button("💾 Save").clicked() {
+                        if self.generator.get_numbers().is_empty() {
+                            self.error_message = "No numbers to save".to_owned();
+                        } else {
+                            match self.generator.save_numbers(&self.filename) {
+                                Ok(_) => self.error_message = format!("Saved to {}", self.filename),
+                                Err(e) => self.error_message = format!("Save error: {}", e),
+                            }
                         }
-                    },
-                );
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Lower Bound:");
-                ui.add(egui::DragValue::new(&mut self.lower_bound));
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Upper Bound:");
-                ui.add(egui::DragValue::new(&mut self.upper_bound));
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Number of Random Numbers to Generate:");
-                ui.add(
-                    egui::DragValue::new(&mut self.num_to_generate)
-                        .range(1..=99999),
-                );
-            });
-
-            ui.checkbox(&mut self.allow_duplicates, "Allow Duplicates");
-
-            let now = std::time::Instant::now();
-            if now.duration_since(self.last_update_time).as_millis() >= 500 {
-                let local_time = Local::now();
-                self.cached_time = local_time
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string();
-                self.last_update_time = now;
-            }
-            ui.with_layout(
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    ui.label(&self.cached_time);
-                },
-            );
-            ctx.request_repaint_after(std::time::Duration::from_millis(500));
-
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.heading("Generated Numbers");
-                if ui.button("Generate").clicked() {
-                    self.generate_numbers();
-                }
-                if ui.button("Clear").clicked() {
-                    self.generated_numbers.clear();
-                }
-            });
-
-            // 恢复逗号分隔的滚动显示
-            egui::ScrollArea::vertical() // 支持垂直滚动
-                .max_height(160.0) // 设置最大显示高度
-                .show(ui, |ui| {
-                    ui.label( // 直接显示逗号分隔的字符串
-                        self.generated_numbers
-                            .iter()
-                            .map(|n| n.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
+                    }
                 });
 
-            ui.with_layout(
-                egui::Layout::bottom_up(egui::Align::Center),
-                |ui| {
-                    ui.label("https://github.com/Daihongyi/random-tool-github");
-                },
-            );
+                // 文件名输入框
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    ui.label("Filename:");
+                    ui.text_edit_singleline(&mut self.filename);
+                });
 
-            ui.with_layout(
-                egui::Layout::bottom_up(egui::Align::RIGHT),
-                |ui| {
-                    ui.label("MPL2.0");
-                },
-            );
+                // 错误信息
+                if !self.error_message.is_empty() {
+                    ui.add_space(10.0);
+                    ui.colored_label(egui::Color32::RED, &self.error_message);
+                }
+
+                ui.add_space(20.0);
+
+                // 结果显示
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        egui::Frame::group(ui.style())
+                            .fill(ui.visuals().faint_bg_color)
+                            .inner_margin(egui::Margin::same(10.0 as i8))
+                            .show(ui, |ui| {
+                                if self.generator.get_numbers().is_empty() {
+                                    ui.centered_and_justified(|ui| {
+                                        ui.label("No numbers generated yet");
+                                    });
+                                } else {
+                                    let numbers = self.generator.get_numbers();
+                                    let chunk_size = 10;
+
+                                    for chunk in numbers.chunks(chunk_size) {
+                                        ui.horizontal(|ui| {
+                                            for num in chunk {
+                                                ui.monospace(format!("{:>8}", num));
+                                            }
+                                        });
+                                    }
+
+                                    ui.add_space(5.0);
+                                    ui.separator();
+                                    ui.label(format!(
+                                        "Total: {} numbers",
+                                        numbers.len()
+                                    ));
+                                }
+                            });
+                    });
+            });
         });
+
+        // 添加状态栏显示版本信息
+        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                // 添加About按钮
+                if ui.button("ℹ️ About").clicked() {
+                    self.about_open = true;
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    ui.label("Random Generator");
+                });
+            });
+        });
+
+        // 添加About对话框
+        if self.about_open {
+            // 修复：提前复制需要的数据
+            let gui_version = self.gui_version.clone();
+            let core_version = self.generator.get_core_version().to_string();
+
+            egui::Window::new("About Random Generator")
+                .id(egui::Id::new("about_window")) // 添加唯一ID
+                .open(&mut self.about_open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading("Random Generator");
+                        ui.add_space(10.0);
+
+                        ui.label(format!("GUI Version: {}", gui_version));
+                        ui.label(format!("Core Version: {}", core_version));
+
+                        ui.add_space(15.0);
+
+                        ui.hyperlink_to("GitHub Repository", "https://github.com/Daihongyi/random-tool-github");
+
+                        ui.add_space(10.0);
+
+                        ui.label("License: MPL-2.0 (Mozilla Public License 2.0)");
+                        ui.label("This software is licensed under the terms of the MPL-2.0.");
+                        ui.label("Thanks to the open-source community");
+                        ui.label("Develop on RustRover");
+                        ui.add_space(15.0);
+
+                        if ui.button("Close").clicked() {
+                            // 设置关闭请求标志，而不是直接修改about_open
+                            self.close_requested = true;
+                        }
+                    });
+                });
+        }
     }
 }
 
-fn main() {
+fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([480.0, 360.0]),
+            .with_inner_size([800.0, 600.0]),
         ..Default::default()
     };
 
-    let _ = eframe::run_native(
-        "Random Number Generator",
+    eframe::run_native(
+        "Random Generator",
         options,
-        Box::new(|cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::light());
-            Ok(Box::new(RandomNumberGeneratorApp::new()))
-        }),
-    );
+        Box::new(|_cc| Ok(Box::new(RandomGeneratorApp::default()))),
+    )
 }

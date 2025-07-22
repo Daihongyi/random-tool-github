@@ -15,9 +15,9 @@ pub enum RandomGeneratorError {
 impl fmt::Display for RandomGeneratorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RandomGeneratorError::InvalidBounds => write!(f, "下界必须小于等于上界"),
-            RandomGeneratorError::TooManyNumbers => write!(f, "请求的数字数量超过了范围大小"),
-            RandomGeneratorError::IoError(e) => write!(f, "IO错误: {}", e),
+            RandomGeneratorError::InvalidBounds => write!(f, "The lower bound must be less than or equal to the upper bound"),
+            RandomGeneratorError::TooManyNumbers => write!(f, "The number of requested numbers exceeds the range size"),
+            RandomGeneratorError::IoError(e) => write!(f, "IO Error: {}", e),
         }
     }
 }
@@ -62,7 +62,7 @@ impl RandomGenerator {
     /// 创建新的随机数生成器实例
     pub fn new() -> Self {
         Self {
-            core_version: "v1.1".to_string(),
+            core_version: "v1.2".to_string(),
             config: GeneratorConfig::default(),
             generated_numbers: Vec::new(),
             rng: rand::rng(),

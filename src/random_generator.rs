@@ -80,7 +80,7 @@ impl RandomGenerator {
     /// 创建新的随机数生成器实例
     pub fn new() -> Self {
         Self {
-            core_version: "v1.3".to_string(),
+            core_version: "v2.0".to_string(),
             config: GeneratorConfig::default(),
             generated_numbers: Vec::new(),
             rng: rand::thread_rng(),

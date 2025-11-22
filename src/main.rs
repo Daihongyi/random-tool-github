@@ -63,7 +63,7 @@ impl Default for RandomGeneratorApp {
         let custom_list_input = config.custom_list_input.clone();
 
         Self {
-            gui_version: "v1.3".to_string(),
+            gui_version: "v2.0".to_string(),
             generator,
             lower_bound,
             upper_bound,

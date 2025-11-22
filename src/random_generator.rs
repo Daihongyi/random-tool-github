@@ -3,6 +3,7 @@ use std::fs;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
+use regex::Regex;
 
 /// 自定义错误类型
 #[derive(Debug)]
@@ -10,6 +11,8 @@ pub enum RandomGeneratorError {
     InvalidBounds,
     TooManyNumbers,
     IoError(std::io::Error),
+    InvalidInputFormat,
+    EmptyList,
 }
 
 impl fmt::Display for RandomGeneratorError {
@@ -18,6 +21,8 @@ impl fmt::Display for RandomGeneratorError {
             RandomGeneratorError::InvalidBounds => write!(f, "The lower bound must be less than or equal to the upper bound"),
             RandomGeneratorError::TooManyNumbers => write!(f, "The number of requested numbers exceeds the range size"),
             RandomGeneratorError::IoError(e) => write!(f, "IO Error: {}", e),
+            RandomGeneratorError::InvalidInputFormat => write!(f, "Invalid input format for custom list"),
+            RandomGeneratorError::EmptyList => write!(f, "Custom list cannot be empty"),
         }
     }
 }
@@ -30,6 +35,13 @@ impl From<std::io::Error> for RandomGeneratorError {
     }
 }
 
+/// 生成器模式
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeneratorMode {
+    Range,
+    CustomList,
+}
+
 /// 随机数生成器配置
 #[derive(Debug, Clone)]
 pub struct GeneratorConfig {
@@ -37,6 +49,9 @@ pub struct GeneratorConfig {
     pub upper_bound: i64,
     pub num_to_generate: usize,
     pub allow_duplicates: bool,
+    pub mode: GeneratorMode,
+    pub custom_list: Vec<i64>,
+    pub custom_list_input: String,
 }
 
 impl Default for GeneratorConfig {
@@ -46,6 +61,9 @@ impl Default for GeneratorConfig {
             upper_bound: 1024,
             num_to_generate: 1,
             allow_duplicates: false,
+            mode: GeneratorMode::Range,
+            custom_list: Vec::new(),
+            custom_list_input: String::new(),
         }
     }
 }
@@ -62,10 +80,10 @@ impl RandomGenerator {
     /// 创建新的随机数生成器实例
     pub fn new() -> Self {
         Self {
-            core_version: "v1.2".to_string(),
+            core_version: "v1.3".to_string(),
             config: GeneratorConfig::default(),
             generated_numbers: Vec::new(),
-            rng: rand::rng(),
+            rng: rand::thread_rng(),
         }
     }
 
@@ -109,7 +127,10 @@ impl RandomGenerator {
     /// 设置生成数量
     pub fn set_num_to_generate(&mut self, num: usize) -> Result<(), RandomGeneratorError> {
         if !self.config.allow_duplicates {
-            let range_size = self.get_range_size();
+            let range_size = match self.config.mode {
+                GeneratorMode::Range => self.get_range_size(),
+                GeneratorMode::CustomList => self.config.custom_list.len(),
+            };
             if num > range_size {
                 return Err(RandomGeneratorError::TooManyNumbers);
             }
@@ -121,7 +142,10 @@ impl RandomGenerator {
     /// 设置是否允许重复
     pub fn set_allow_duplicates(&mut self, allow: bool) -> Result<(), RandomGeneratorError> {
         if !allow {
-            let range_size = self.get_range_size();
+            let range_size = match self.config.mode {
+                GeneratorMode::Range => self.get_range_size(),
+                GeneratorMode::CustomList => self.config.custom_list.len(),
+            };
             if self.config.num_to_generate > range_size {
                 return Err(RandomGeneratorError::TooManyNumbers);
             }
@@ -135,63 +159,175 @@ impl RandomGenerator {
         self.config.allow_duplicates
     }
 
+    /// 设置生成器模式
+    pub fn set_mode(&mut self, mode: GeneratorMode) -> Result<(), RandomGeneratorError> {
+        self.config.mode = mode;
+        self.validate_config(&self.config)?;
+        Ok(())
+    }
+
+    /// 获取生成器模式
+    pub fn get_mode(&self) -> &GeneratorMode {
+        &self.config.mode
+    }
+
+    /// 设置自定义列表输入
+    pub fn set_custom_list_input(&mut self, input: String) -> Result<(), RandomGeneratorError> {
+        self.config.custom_list_input = input;
+        self.parse_custom_list()?;
+        self.validate_config(&self.config)?;
+        Ok(())
+    }
+
+    /// 获取自定义列表输入
+    pub fn get_custom_list_input(&self) -> &str {
+        &self.config.custom_list_input
+    }
+
+    /// 解析自定义列表输入
+    fn parse_custom_list(&mut self) -> Result<(), RandomGeneratorError> {
+        if self.config.custom_list_input.trim().is_empty() {
+            self.config.custom_list.clear();
+            return Ok(());
+        }
+
+        // 支持多种分隔符：逗号、空格、换行等
+        let re = Regex::new(r"[,\s\n;]+").unwrap();
+        let parts: Vec<&str> = re.split(&self.config.custom_list_input).collect();
+
+        let mut numbers = Vec::new();
+        for part in parts {
+            if part.trim().is_empty() {
+                continue;
+            }
+
+            match part.trim().parse::<i64>() {
+                Ok(num) => numbers.push(num),
+                Err(_) => return Err(RandomGeneratorError::InvalidInputFormat),
+            }
+        }
+
+        self.config.custom_list = numbers;
+        Ok(())
+    }
+
     /// 生成随机数
     pub fn generate_numbers(&mut self) -> Result<(), RandomGeneratorError> {
         self.validate_config(&self.config)?;
 
         self.generated_numbers.clear();
 
-        if self.config.allow_duplicates {
-            self.generate_with_duplicates();
-        } else {
-            self.generate_without_duplicates();
+        match self.config.mode {
+            GeneratorMode::Range => {
+                if self.config.allow_duplicates {
+                    self.generate_range_with_duplicates();
+                } else {
+                    self.generate_range_without_duplicates();
+                }
+            }
+            GeneratorMode::CustomList => {
+                if self.config.allow_duplicates {
+                    self.generate_custom_with_duplicates();
+                } else {
+                    self.generate_custom_without_duplicates();
+                }
+            }
         }
 
         Ok(())
     }
 
-    /// 生成允许重复的随机数
-    fn generate_with_duplicates(&mut self) {
+    /// 生成允许重复的随机数(范围模式)
+    fn generate_range_with_duplicates(&mut self) {
         self.generated_numbers.reserve(self.config.num_to_generate);
 
         for _ in 0..self.config.num_to_generate {
-            let num = self.rng.random_range(self.config.lower_bound..=self.config.upper_bound);
+            let num = self.rng.gen_range(self.config.lower_bound..=self.config.upper_bound);
             self.generated_numbers.push(num);
         }
     }
 
-    /// 生成不允许重复的随机数
-    fn generate_without_duplicates(&mut self) {
+    /// 生成不允许重复的随机数(范围模式)
+    fn generate_range_without_duplicates(&mut self) {
         let range_size = self.get_range_size();
 
-        // 如果需要生成的数量接近范围大小，使用洗牌算法
+        // 如果需要生成的数量接近范围大小,使用洗牌算法
         if self.config.num_to_generate as f64 > range_size as f64 * 0.5 {
-            self.generate_by_shuffle();
+            self.generate_range_by_shuffle();
         } else {
-            self.generate_by_set();
+            self.generate_range_by_set();
         }
     }
 
-    /// 使用洗牌算法生成不重复随机数
-    fn generate_by_shuffle(&mut self) {
+    /// 使用洗牌算法生成不允许重复的随机数(范围模式)
+    fn generate_range_by_shuffle(&mut self) {
         let mut all_numbers: Vec<i64> = (self.config.lower_bound..=self.config.upper_bound).collect();
 
         // Fisher-Yates 洗牌算法
         for i in (1..all_numbers.len()).rev() {
-            let j = self.rng.random_range(0..=i);
+            let j = self.rng.gen_range(0..=i);
             all_numbers.swap(i, j);
         }
 
         self.generated_numbers = all_numbers.into_iter().take(self.config.num_to_generate).collect();
     }
 
-    /// 使用集合生成不重复随机数
-    fn generate_by_set(&mut self) {
+    /// 使用集合生成不允许重复的随机数(范围模式)
+    fn generate_range_by_set(&mut self) {
         let mut unique_set = HashSet::with_capacity(self.config.num_to_generate);
 
         while unique_set.len() < self.config.num_to_generate {
-            let num = self.rng.random_range(self.config.lower_bound..=self.config.upper_bound);
+            let num = self.rng.gen_range(self.config.lower_bound..=self.config.upper_bound);
             unique_set.insert(num);
+        }
+
+        self.generated_numbers = unique_set.into_iter().collect();
+    }
+
+    /// 生成允许重复的随机数(自定义列表模式)
+    fn generate_custom_with_duplicates(&mut self) {
+        self.generated_numbers.reserve(self.config.num_to_generate);
+        let list_len = self.config.custom_list.len();
+
+        for _ in 0..self.config.num_to_generate {
+            let index = self.rng.gen_range(0..list_len);
+            self.generated_numbers.push(self.config.custom_list[index]);
+        }
+    }
+
+    /// 生成不允许重复的随机数(自定义列表模式)
+    fn generate_custom_without_duplicates(&mut self) {
+        let list_len = self.config.custom_list.len();
+
+        // 如果需要生成的数量接近列表大小,使用洗牌算法
+        if self.config.num_to_generate as f64 > list_len as f64 * 0.5 {
+            self.generate_custom_by_shuffle();
+        } else {
+            self.generate_custom_by_set();
+        }
+    }
+
+    /// 使用洗牌算法生成不允许重复的随机数(自定义列表模式)
+    fn generate_custom_by_shuffle(&mut self) {
+        let mut shuffled_list = self.config.custom_list.clone();
+
+        // Fisher-Yates 洗牌算法
+        for i in (1..shuffled_list.len()).rev() {
+            let j = self.rng.gen_range(0..=i);
+            shuffled_list.swap(i, j);
+        }
+
+        self.generated_numbers = shuffled_list.into_iter().take(self.config.num_to_generate).collect();
+    }
+
+    /// 使用集合生成不允许重复的随机数(自定义列表模式)
+    fn generate_custom_by_set(&mut self) {
+        let mut unique_set = HashSet::with_capacity(self.config.num_to_generate);
+        let list_len = self.config.custom_list.len();
+
+        while unique_set.len() < self.config.num_to_generate {
+            let index = self.rng.gen_range(0..list_len);
+            unique_set.insert(self.config.custom_list[index]);
         }
 
         self.generated_numbers = unique_set.into_iter().collect();
@@ -207,7 +343,7 @@ impl RandomGenerator {
         &self.generated_numbers
     }
 
-    /// 获取生成的数字（可变引用）
+    /// 获取生成的数字(可变引用)
     pub fn get_numbers_mut(&mut self) -> &mut Vec<i64> {
         &mut self.generated_numbers
     }
@@ -280,14 +416,27 @@ impl RandomGenerator {
 
     /// 验证配置
     fn validate_config(&self, config: &GeneratorConfig) -> Result<(), RandomGeneratorError> {
-        if config.lower_bound > config.upper_bound {
-            return Err(RandomGeneratorError::InvalidBounds);
-        }
+        match config.mode {
+            GeneratorMode::Range => {
+                if config.lower_bound > config.upper_bound {
+                    return Err(RandomGeneratorError::InvalidBounds);
+                }
 
-        if !config.allow_duplicates {
-            let range_size = (config.upper_bound - config.lower_bound + 1) as usize;
-            if config.num_to_generate > range_size {
-                return Err(RandomGeneratorError::TooManyNumbers);
+                if !config.allow_duplicates {
+                    let range_size = self.get_range_size();
+                    if config.num_to_generate > range_size {
+                        return Err(RandomGeneratorError::TooManyNumbers);
+                    }
+                }
+            }
+            GeneratorMode::CustomList => {
+                if config.custom_list.is_empty() {
+                    return Err(RandomGeneratorError::EmptyList);
+                }
+
+                if !config.allow_duplicates && config.num_to_generate > config.custom_list.len() {
+                    return Err(RandomGeneratorError::TooManyNumbers);
+                }
             }
         }
 
@@ -347,5 +496,21 @@ mod tests {
         let mut random_gen = RandomGenerator::new();
         assert!(random_gen.set_lower_bound(100).is_err());
         assert!(random_gen.set_upper_bound(-100).is_err());
+    }
+
+    #[test]
+    fn test_custom_list_generation() {
+        let mut random_gen = RandomGenerator::new();
+        random_gen.set_mode(GeneratorMode::CustomList).unwrap();
+        random_gen.set_custom_list_input("1,2,3,4,5".to_string()).unwrap();
+        random_gen.set_num_to_generate(3).unwrap();
+        random_gen.generate_numbers().unwrap();
+
+        assert_eq!(random_gen.get_numbers().len(), 3);
+
+        let numbers = random_gen.get_numbers();
+        for &num in numbers {
+            assert!(num >= 1 && num <= 5, "数字 {} 不在自定义列表中", num);
+        }
     }
 }

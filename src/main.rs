@@ -1,15 +1,23 @@
 mod random_generator;
 
 use iced::widget::{
-    button, checkbox, column, container, row, scrollable, text, text_input, Space
+    button, checkbox, column, container, horizontal_rule, pick_list, row, scrollable, text, text_input, Space
 };
 use iced::{
     alignment, Element, Length, Theme, Color, Background, Border, Shadow, Vector, Task
 };
-use random_generator::RandomGenerator;
+use random_generator::{RandomGenerator, GeneratorMode};
+use std::fmt;
 
-// 定义 Emoji 字体常量
-const EMOJI_FONT: iced::Font = iced::Font::with_name("Segoe UI Emoji");
+// Implement Display trait for GeneratorMode
+impl fmt::Display for GeneratorMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GeneratorMode::Range => write!(f, "Range"),
+            GeneratorMode::CustomList => write!(f, "Custom List"),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -18,6 +26,8 @@ pub enum Message {
     NumToGenerateChanged(String),
     FilenameChanged(String),
     AllowDuplicatesToggled(bool),
+    ModeChanged(GeneratorMode),
+    CustomListChanged(String),
     Generate,
     Clear,
     Save,
@@ -37,19 +47,23 @@ struct RandomGeneratorApp {
     dark_mode: bool,
     about_open: bool,
     theme: Theme,
+    mode: GeneratorMode,
+    custom_list_input: String,
 }
 
 impl Default for RandomGeneratorApp {
     fn default() -> Self {
         let generator = RandomGenerator::new();
         let config = generator.get_config();
-        // 提取配置值并结束借用
+        // Extract config values and end borrow
         let lower_bound = config.lower_bound.to_string();
         let upper_bound = config.upper_bound.to_string();
         let num_to_generate = config.num_to_generate.to_string();
+        let mode = config.mode.clone();
+        let custom_list_input = config.custom_list_input.clone();
 
         Self {
-            gui_version: "v1.2".to_string(),
+            gui_version: "v1.3".to_string(),
             generator,
             lower_bound,
             upper_bound,
@@ -59,6 +73,8 @@ impl Default for RandomGeneratorApp {
             dark_mode: false,
             about_open: false,
             theme: Theme::Light,
+            mode,
+            custom_list_input,
         }
     }
 }
@@ -91,44 +107,59 @@ impl RandomGeneratorApp {
                     self.error_message = e.to_string();
                 }
             }
+            Message::ModeChanged(mode) => {
+                self.mode = mode.clone();
+                if let Err(e) = self.generator.set_mode(mode) {
+                    self.error_message = e.to_string();
+                }
+            }
+            Message::CustomListChanged(value) => {
+                self.custom_list_input = value.clone();
+                if let Err(e) = self.generator.set_custom_list_input(value) {
+                    self.error_message = e.to_string();
+                }
+            }
             Message::Generate => {
-                // 清除之前的错误信息
+                // Clear previous error message
                 self.error_message.clear();
 
-                // 解析并设置下界
-                if let Ok(lower) = self.lower_bound.parse() {
-                    if let Err(e) = self.generator.set_lower_bound(lower) {
-                        self.error_message = e.to_string();
+                // If range mode, parse and set bounds
+                if self.mode == GeneratorMode::Range {
+                    // Parse and set lower bound
+                    if let Ok(lower) = self.lower_bound.parse() {
+                        if let Err(e) = self.generator.set_lower_bound(lower) {
+                            self.error_message = e.to_string();
+                            return Task::none();
+                        }
+                    } else {
+                        self.error_message = "Lower bound must be an integer".to_string();
                         return Task::none();
                     }
-                } else {
-                    self.error_message = "下界必须是整数".to_string();
-                    return Task::none();
-                }
 
-                // 解析并设置上界
-                if let Ok(upper) = self.upper_bound.parse() {
-                    if let Err(e) = self.generator.set_upper_bound(upper) {
-                        self.error_message = e.to_string();
+                    // Parse and set upper bound
+                    if let Ok(upper) = self.upper_bound.parse() {
+                        if let Err(e) = self.generator.set_upper_bound(upper) {
+                            self.error_message = e.to_string();
+                            return Task::none();
+                        }
+                    } else {
+                        self.error_message = "Upper bound must be an integer".to_string();
                         return Task::none();
                     }
-                } else {
-                    self.error_message = "上界必须是整数".to_string();
-                    return Task::none();
                 }
 
-                // 解析并设置生成数量
+                // Parse and set generation count
                 if let Ok(count) = self.num_to_generate.parse() {
                     if let Err(e) = self.generator.set_num_to_generate(count) {
                         self.error_message = e.to_string();
                         return Task::none();
                     }
                 } else {
-                    self.error_message = "生成数量必须是整数".to_string();
+                    self.error_message = "Count must be an integer".to_string();
                     return Task::none();
                 }
 
-                // 生成随机数
+                // Generate random numbers
                 if let Err(e) = self.generator.generate_numbers() {
                     self.error_message = e.to_string();
                 }
@@ -139,11 +170,11 @@ impl RandomGeneratorApp {
             }
             Message::Save => {
                 if self.generator.get_numbers().is_empty() {
-                    self.error_message = "没有数字可保存".to_owned();
+                    self.error_message = "No numbers to save".to_owned();
                 } else {
                     match self.generator.save_numbers(&self.filename) {
-                        Ok(_) => self.error_message = format!("✅ 保存到 {}", self.filename),
-                        Err(e) => self.error_message = format!("❌ 保存错误: {}", e),
+                        Ok(_) => self.error_message = format!("Saved to {}", self.filename),
+                        Err(e) => self.error_message = format!("Save error: {}", e),
                     }
                 }
             }
@@ -167,18 +198,16 @@ impl RandomGeneratorApp {
 
     fn view(&self) -> Element<Message> {
         let header = row![
-            text("🎲 Random Generator")
-                .font(EMOJI_FONT)  // 添加 Emoji 字体
-                .size(16)
+            text("Random Generator")
+                .size(18)
                 .color(if self.dark_mode {
                     Color::from_rgb(0.9, 0.9, 0.9)
                 } else {
                     Color::BLACK
                 }),
             Space::with_width(Length::Fill),
-            button(text(if self.dark_mode { "☀️" } else { "🌙" })
-                .font(EMOJI_FONT)  // 添加 Emoji 字体
-                .size(11))
+            button(text(if self.dark_mode { "Light" } else { "Dark" })
+                .size(14))
                 .on_press(Message::ToggleTheme)
                 .style(move |_theme: &Theme, status| {
                     let is_pressed = status == button::Status::Pressed;
@@ -218,59 +247,160 @@ impl RandomGeneratorApp {
             .spacing(4)
             .align_y(alignment::Vertical::Center);
 
-        let input_section = container(
-            column![
-                // Input row - more compact
+        // Mode picker
+        let mode_picker = container(
+            row![
+                text("Mode:").size(14),
+                pick_list(
+                    &[GeneratorMode::Range, GeneratorMode::CustomList][..],
+                    Some(self.mode.clone()),
+                    Message::ModeChanged
+                )
+                .text_size(14)
+                .style(move |_theme: &Theme, _status| {
+                    pick_list::Style {
+                        placeholder_color: if self.dark_mode {
+                            Color::from_rgb(0.6, 0.6, 0.6)
+                        } else {
+                            Color::from_rgb(0.4, 0.4, 0.4)
+                        },
+                        handle_color: if self.dark_mode {
+                            Color::from_rgb(0.7, 0.7, 0.7)
+                        } else {
+                            Color::from_rgb(0.4, 0.4, 0.4)
+                        },
+                        text_color: if self.dark_mode {
+                            Color::from_rgb(0.9, 0.9, 0.9)
+                        } else {
+                            Color::BLACK
+                        },
+                        background: Background::Color(
+                            if self.dark_mode {
+                                Color::from_rgb(0.25, 0.25, 0.3)
+                            } else {
+                                Color::WHITE
+                            }
+                        ),
+                        border: Border {
+                            color: if self.dark_mode {
+                                Color::from_rgb(0.4, 0.4, 0.45)
+                            } else {
+                                Color::from_rgb(0.8, 0.8, 0.8)
+                            },
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                    }
+                }),
+            ]
+                .spacing(6)
+                .align_y(alignment::Vertical::Center)
+        )
+            .padding(2);
+
+        // Range mode inputs - now includes Count
+        let range_inputs = if self.mode == GeneratorMode::Range {
+            container(
                 row![
                     // From input
                     column![
-                        text("From").size(11),
+                        text("From").size(14),
                         text_input("", &self.lower_bound)
                             .on_input(Message::LowerBoundChanged)
-                            .width(Length::Fixed(50.0))
-                            .size(11)
+                            .width(Length::Fixed(60.0))
+                            .size(14)
                             .style(move |_theme: &Theme, _status| get_text_input_style(self.dark_mode))
                     ]
-                    .spacing(1),
+                    .spacing(2),
 
-                    Space::with_width(Length::Fixed(4.0)),
-                    text("→").size(12),
-                    Space::with_width(Length::Fixed(4.0)),
+                    Space::with_width(Length::Fixed(8.0)),
 
                     // To input
                     column![
-                        text("To").size(11),
+                        text("To").size(14),
                         text_input("", &self.upper_bound)
                             .on_input(Message::UpperBoundChanged)
-                            .width(Length::Fixed(50.0))
-                            .size(11)
+                            .width(Length::Fixed(60.0))
+                            .size(14)
                             .style(move |_theme: &Theme, _status| get_text_input_style(self.dark_mode))
                     ]
-                    .spacing(1),
+                    .spacing(2),
 
                     Space::with_width(Length::Fixed(8.0)),
 
                     // Count input
                     column![
-                        text("Count").size(11),
+                        text("Count").size(14),
                         text_input("", &self.num_to_generate)
                             .on_input(Message::NumToGenerateChanged)
-                            .width(Length::Fixed(40.0))
-                            .size(11)
+                            .width(Length::Fixed(60.0))
+                            .size(14)
                             .style(move |_theme: &Theme, _status| get_text_input_style(self.dark_mode))
                     ]
-                    .spacing(1)
+                    .spacing(2),
                 ]
-                .spacing(4)
-                .align_y(alignment::Vertical::Bottom),
+                    .spacing(6)
+                    .align_y(alignment::Vertical::Bottom)
+            )
+        } else {
+            container(Space::with_width(Length::Fixed(0.0)))
+        };
 
-                Space::with_height(Length::Fixed(4.0)),
+        // Custom list mode input
+        let custom_list_input = if self.mode == GeneratorMode::CustomList {
+            container(
+                column![
+                    text("Numbers (comma/space separated):").size(14),
+                    text_input("e.g. 1, 2, 3, 4, 5", &self.custom_list_input)
+                        .on_input(Message::CustomListChanged)
+                        .width(Length::Fill)
+                        .size(14)
+                        .style(move |_theme: &Theme, _status| get_text_input_style(self.dark_mode)),
+                    Space::with_height(Length::Fixed(4.0)),
+                    // Count input for custom list mode
+                    row![
+                        column![
+                            text("Count").size(14),
+                            text_input("", &self.num_to_generate)
+                                .on_input(Message::NumToGenerateChanged)
+                                .width(Length::Fixed(60.0))
+                                .size(14)
+                                .style(move |_theme: &Theme, _status| get_text_input_style(self.dark_mode))
+                        ]
+                        .spacing(2),
+                    ]
+                ]
+                    .spacing(4)
+            )
+                .padding(4)
+        } else {
+            container(Space::with_height(Length::Fixed(0.0)))
+        };
 
-                // Checkbox - more compact
+        let input_section = container(
+            column![
+                mode_picker,
+                horizontal_rule(1).style(move |_theme: &Theme| {
+                    iced::widget::rule::Style {
+                        color: if self.dark_mode {
+                            Color::from_rgb(0.4, 0.4, 0.45)
+                        } else {
+                            Color::from_rgb(0.8, 0.8, 0.8)
+                        },
+                        width: 1,
+                        radius: 0.0.into(),
+                        fill_mode: iced::widget::rule::FillMode::Full,
+                    }
+                }),
+                range_inputs,
+                custom_list_input,
+                Space::with_height(Length::Fixed(6.0)),
+
+                // Checkbox
                 checkbox("Allow duplicates", self.generator.get_allow_duplicates())
                     .on_toggle(Message::AllowDuplicatesToggled)
-                    .size(11)
-                    .text_size(10)
+                    .size(14)
+                    .text_size(14)
                     .style(move |_theme: &Theme, _status| {
                         checkbox::Style {
                             background: Background::Color(
@@ -302,8 +432,8 @@ impl RandomGeneratorApp {
                         }
                     })
             ]
-                .spacing(3)
-                .padding(6)
+                .spacing(6)
+                .padding(10)
         )
             .style(move |_theme: &Theme| {
                 iced::widget::container::Style {
@@ -328,10 +458,11 @@ impl RandomGeneratorApp {
                 }
             });
 
+        // Button row with filename input
         let button_row = row![
-            button(text("Generate").size(11))
+            button(text("Generate").size(14))
                 .on_press(Message::Generate)
-                .width(Length::Fixed(70.0))
+                .width(Length::Fixed(85.0))
                 .style(move |_theme: &Theme, status| {
                     let is_pressed = status == button::Status::Pressed;
                     button::Style {
@@ -363,9 +494,9 @@ impl RandomGeneratorApp {
                     }
                 }),
 
-            button(text("Clear").size(11))
+            button(text("Clear").size(14))
                 .on_press(Message::Clear)
-                .width(Length::Fixed(55.0))
+                .width(Length::Fixed(65.0))
                 .style(move |_theme: &Theme, status| {
                     let is_pressed = status == button::Status::Pressed;
                     button::Style {
@@ -397,9 +528,9 @@ impl RandomGeneratorApp {
                     }
                 }),
 
-            button(text("Save").size(11))
+            button(text("Save").size(14))
                 .on_press(Message::Save)
-                .width(Length::Fixed(55.0))
+                .width(Length::Fixed(65.0))
                 .style(move |_theme: &Theme, status| {
                     let is_pressed = status == button::Status::Pressed;
                     button::Style {
@@ -429,31 +560,28 @@ impl RandomGeneratorApp {
                         },
                         ..Default::default()
                     }
-                })
-        ]
-            .spacing(4);
+                }),
 
-        let filename_input = container(
-            row![
-                text("File:").size(12),
-                text_input("", &self.filename)
-                    .on_input(Message::FilenameChanged)
-                    .width(Length::Fixed(100.0))
-                    .size(10)
-                    .style(move |_theme: &Theme, _status| get_text_input_style(self.dark_mode))
-            ]
-                .spacing(4)
-                .align_y(alignment::Vertical::Center)
-        )
-            .padding(2);
+            Space::with_width(Length::Fixed(8.0)),
+
+            // Filename input
+            text("File:").size(14),
+            text_input("", &self.filename)
+                .on_input(Message::FilenameChanged)
+                .width(Length::Fill)
+                .size(14)
+                .style(move |_theme: &Theme, _status| get_text_input_style(self.dark_mode))
+        ]
+            .spacing(6)
+            .align_y(alignment::Vertical::Center);
 
         let error_display = if !self.error_message.is_empty() {
             container(
                 text(&self.error_message)
-                    .size(10)
+                    .size(13)
                     .style(move |_theme: &Theme| {
                         iced::widget::text::Style {
-                            color: Some(if self.error_message.starts_with("✅") {
+                            color: Some(if self.error_message.starts_with("Saved") {
                                 Color::from_rgb(0.4, 0.8, 0.4)
                             } else {
                                 Color::from_rgb(1.0, 0.4, 0.4)
@@ -461,7 +589,7 @@ impl RandomGeneratorApp {
                         }
                     })
             )
-                .padding(2)
+                .padding(4)
                 .style(move |_theme: &Theme| {
                     iced::widget::container::Style {
                         background: Some(Background::Color(
@@ -485,9 +613,11 @@ impl RandomGeneratorApp {
 
         let results_display = if self.generator.get_numbers().is_empty() {
             container(
-                text("🎯 Click Generate to start")
-                    .font(EMOJI_FONT)  // 添加 Emoji 字体
-                    .size(12)
+                text(match self.mode {
+                    GeneratorMode::Range => "Click Generate to start",
+                    GeneratorMode::CustomList => "Enter numbers and click Generate",
+                })
+                    .size(14)
                     .style(move |_theme: &Theme| {
                         iced::widget::text::Style {
                             color: Some(if self.dark_mode {
@@ -521,7 +651,7 @@ impl RandomGeneratorApp {
                 })
         } else {
             let numbers = self.generator.get_numbers();
-            let chunk_size = 8; // Fewer numbers per row for compact display
+            let chunk_size = 8;
 
             let mut rows = Vec::new();
             for chunk in numbers.chunks(chunk_size) {
@@ -529,10 +659,10 @@ impl RandomGeneratorApp {
                     chunk.iter().map(|num| {
                         container(
                             text(format!("{}", num))
-                                .size(10)
+                                .size(13)
                                 .font(iced::Font::MONOSPACE)
                         )
-                            .padding(2)
+                            .padding(3)
                             .style(move |_theme: &Theme| {
                                 iced::widget::container::Style {
                                     background: Some(Background::Color(
@@ -553,17 +683,16 @@ impl RandomGeneratorApp {
                             .into()
                     }).collect::<Vec<_>>()
                 )
-                    .spacing(2);
+                    .spacing(3);
                 rows.push(number_row.into());
             }
 
             // Add total count
-            rows.push(Space::with_height(Length::Fixed(4.0)).into());
+            rows.push(Space::with_height(Length::Fixed(6.0)).into());
             rows.push(
                 container(
-                    text(format!("📊 Total: {}", numbers.len()))
-                        .font(EMOJI_FONT)  // 添加 Emoji 字体
-                        .size(10)
+                    text(format!("Total: {}", numbers.len()))
+                        .size(13)
                         .style(move |_theme: &Theme| {
                             iced::widget::text::Style {
                                 color: Some(if self.dark_mode {
@@ -581,8 +710,8 @@ impl RandomGeneratorApp {
             container(
                 scrollable(
                     column(rows)
-                        .spacing(2)
-                        .padding(4)
+                        .spacing(3)
+                        .padding(6)
                 )
                     .height(Length::Fixed(90.0))
             )
@@ -606,9 +735,8 @@ impl RandomGeneratorApp {
         };
 
         let status_bar = row![
-            button(text("ℹ️")
-                .font(EMOJI_FONT)  // 添加 Emoji 字体
-                .size(12))
+            button(text("About")
+                .size(13))
                 .on_press(Message::ShowAbout)
                 .style(move |_theme: &Theme, status| {
                     let is_pressed = status == button::Status::Pressed;
@@ -639,7 +767,7 @@ impl RandomGeneratorApp {
                 }),
             Space::with_width(Length::Fill),
             text("Random Generator")
-                .size(10)
+                .size(12)
                 .color(if self.dark_mode {
                     Color::from_rgb(0.6, 0.6, 0.6)
                 } else {
@@ -651,52 +779,45 @@ impl RandomGeneratorApp {
 
         let main_content = column![
             header,
-            Space::with_height(Length::Fixed(8.0)),
+            Space::with_height(Length::Fixed(10.0)),
             input_section,
-            Space::with_height(Length::Fixed(8.0)),
+            Space::with_height(Length::Fixed(10.0)),
             button_row,
             Space::with_height(Length::Fixed(6.0)),
-            filename_input,
-            Space::with_height(Length::Fixed(4.0)),
             error_display,
-            Space::with_height(Length::Fixed(8.0)),
+            Space::with_height(Length::Fixed(10.0)),
             results_display,
             Space::with_height(Length::Fill),
             status_bar
         ]
             .spacing(0)
-            .padding(12);
+            .padding(14);
 
         if self.about_open {
             let about_content = container(
                 column![
-                    text("🎲 Random Generator")
-                        .font(EMOJI_FONT)  // 添加 Emoji 字体
-                        .size(18)
+                    text("Random Generator")
+                        .size(20)
                         .color(if self.dark_mode { Color::from_rgb(0.9, 0.9, 0.9) } else { Color::BLACK }),
-                    Space::with_height(Length::Fixed(8.0)),
+                    Space::with_height(Length::Fixed(10.0)),
                     text(format!("GUI: {}", self.gui_version))
-                        .size(12),
+                        .size(14),
                     text(format!("Core: {}", self.generator.get_core_version()))
+                        .size(14),
+                    Space::with_height(Length::Fixed(14.0)),
+                    text("GitHub: https://github.com/Daihongyi/random-tool-github")
                         .size(12),
-                    Space::with_height(Length::Fixed(12.0)),
-                    text("🔗 GitHub: https://github.com/Daihongyi/random-tool-github")
-                        .font(EMOJI_FONT)  // 添加 Emoji 字体
-                        .size(10),
-                    Space::with_height(Length::Fixed(8.0)),
-                    text("📄 License: MPL-2.0")
-                        .font(EMOJI_FONT)  // 添加 Emoji 字体
-                        .size(10),
-                    text("🦀 Built with Rust")
-                        .font(EMOJI_FONT)  // 添加 Emoji 字体
-                        .size(10),
-                    text("❄️ Powered by Iced")
-                        .font(EMOJI_FONT)  // 添加 Emoji 字体
-                        .size(10),
-                    Space::with_height(Length::Fixed(16.0)),
-                    button(text("Close").size(12))
+                    Space::with_height(Length::Fixed(10.0)),
+                    text("License: MPL-2.0")
+                        .size(12),
+                    text("Built with Rust")
+                        .size(12),
+                    text("Powered by Iced")
+                        .size(12),
+                    Space::with_height(Length::Fixed(18.0)),
+                    button(text("Close").size(14))
                         .on_press(Message::CloseAbout)
-                        .width(Length::Fixed(70.0))
+                        .width(Length::Fixed(80.0))
                         .style(move |_theme: &Theme, status| {
                             let is_pressed = status == button::Status::Pressed;
                             button::Style {
@@ -728,14 +849,14 @@ impl RandomGeneratorApp {
                             }
                         })
                 ]
-                    .spacing(3)
+                    .spacing(4)
                     .align_x(alignment::Horizontal::Center)
-                    .padding(20)
+                    .padding(24)
             )
-                .center_x(Length::Fixed(280.0))
-                .center_y(Length::Fixed(240.0))
-                .width(Length::Fixed(280.0))
-                .height(Length::Fixed(240.0))
+                .center_x(Length::Fixed(300.0))
+                .center_y(Length::Fixed(260.0))
+                .width(Length::Fixed(300.0))
+                .height(Length::Fixed(260.0))
                 .style(move |_theme: &Theme| {
                     iced::widget::container::Style {
                         background: Some(Background::Color(
@@ -792,7 +913,7 @@ impl RandomGeneratorApp {
     }
 }
 
-// 定义获取文本输入框样式的函数
+// Define function to get text input style
 fn get_text_input_style(dark_mode: bool) -> text_input::Style {
     text_input::Style {
         background: Background::Color(
@@ -830,13 +951,13 @@ fn main() -> iced::Result {
     iced::application(
         RandomGeneratorApp::title,
         RandomGeneratorApp::update,
-        RandomGeneratorApp::view
+        RandomGeneratorApp::view,
     )
         .theme(RandomGeneratorApp::theme)
         .window(iced::window::Settings {
-            size: iced::Size::new(400.0, 360.0),
+            size: iced::Size::new(400.0, 400.0),
             position: Default::default(),
-            min_size: Some(iced::Size::new(280.0, 360.0)),
+            min_size: Some(iced::Size::new(300.0, 400.0)),
             max_size: Some(iced::Size::new(400.0, 600.0)),
             visible: true,
             resizable: true,
